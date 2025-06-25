@@ -119,7 +119,7 @@ class RLOOTrainer(Trainer):
         #########
         if args.total_episodes is None:  # allow the users to define episodes in terms of epochs.
             args.total_episodes = int(args.num_train_epochs * self.train_dataset_len)
-        accelerator = Accelerator(gradient_accumulation_steps=args.gradient_accumulation_steps)
+        accelerator = Accelerator(gradient_accumulation_steps=args.gradient_accumulation_steps, mixed_precision="bf16")  # LEO: added bf16 here
         self.accelerator = accelerator
         args.world_size = accelerator.num_processes
         args.local_batch_size = (
@@ -349,18 +349,21 @@ class RLOOTrainer(Trainer):
                         reward_model, postprocessed_query_response, processing_class.pad_token_id, context_length
                     )
 
+                    score_LEO = torch.softmax(score, dim=1)[:,1]
+
                     responses.append(response)
                     postprocessed_responses.append(postprocessed_response)
                     logprobs.append(logprob)
                     ref_logprobs.append(ref_logprob)
                     sequence_lengths.append(sequence_length)
-                    scores.append(score)
+                    # scores.append(score)
+                    scores.append(score_LEO)
                 responses = torch.cat(responses, 0)
                 postprocessed_responses = torch.cat(postprocessed_responses, 0)
                 logprobs = torch.cat(logprobs, 0)
                 ref_logprobs = torch.cat(ref_logprobs, 0)
                 sequence_lengths = torch.cat(sequence_lengths, 0)
-                scores = torch.cat(scores, 0)
+                scores = torch.cat(scores, 0)  # stays =, since scores has score_LEO
                 del (logprob, ref_logprob, score)
                 torch.cuda.empty_cache()
                 gc.collect()
@@ -540,7 +543,8 @@ class RLOOTrainer(Trainer):
                     _, score, _ = get_reward(
                         self.reward_model, postprocessed_query_response, processing_class.pad_token_id, context_length
                     )
-                    table["score"].extend(self.accelerator.gather(score).float().cpu().numpy())
+                    score_LEO = torch.softmax(score, dim=1)[:,1]
+                    table["score"].extend(self.accelerator.gather(score_LEO).float().cpu().numpy())
 
                 if sampling:
                     break
