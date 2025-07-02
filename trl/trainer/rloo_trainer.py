@@ -366,13 +366,15 @@ class RLOOTrainer(Trainer):
                             dtype=torch.float,
                         ).to(device)
 
+                    score_LEO = torch.softmax(score, dim=1)[:,1]
+
                     # Store batch results
                     responses.append(response)
                     postprocessed_responses.append(postprocessed_response)
                     logprobs.append(logprob)
                     ref_logprobs.append(ref_logprob)
                     sequence_lengths.append(sequence_length)
-                    scores.append(score)
+                    scores.append(score_LEO)
 
                 # Concatenate all batched results
                 responses = torch.cat(responses, 0)
