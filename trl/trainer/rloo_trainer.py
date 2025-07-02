@@ -118,14 +118,38 @@ class RLOOTrainer(Trainer):
         self.optimizer, self.lr_scheduler = optimizers
         self.optimizer_cls_and_kwargs = None  # needed for transformers >= 4.47
 
+        #####
+        # LEO: I moved some things around here.
+        # They initialize the accelerator by calling Accelerator
+        # directly. Turns out that this does not work, you get the
+        # ValueError due to _from_accelerator being False in the 
+        # __init__.
+        # HuggingFace updated Accelerate without checking this 
+        # compatibility, which sucks.
+        # I call self.create_accelerator_and_postprocess(), then 
+        # make the batch sizes later.
+
+        #########
+        # setup model, optimizer, and others
+        #########
+        for module in [policy, ref_policy, reward_model]:
+            if isinstance(module, nn.Module):
+                disable_dropout_in_model(module)
+        if args.stop_token and args.stop_token == "eos":
+            args.stop_token_id = self.processing_class.eos_token_id
+        self.model = policy
+        args.world_size = 8  # I put this here. Must change by #GPUs
+        self.create_accelerator_and_postprocess()
+        accelerator = self.accelerator
+
         #########
         # calculate various batch sizes
         #########
         if args.total_episodes is None:  # allow the users to define episodes in terms of epochs.
             args.total_episodes = int(args.num_train_epochs * self.train_dataset_len)
-        accelerator = Accelerator(gradient_accumulation_steps=args.gradient_accumulation_steps)
-        self.accelerator = accelerator
-        args.world_size = accelerator.num_processes
+        # accelerator = Accelerator(gradient_accumulation_steps=args.gradient_accumulation_steps)
+        # self.accelerator = accelerator
+        # args.world_size = accelerator.num_processes
         args.local_batch_size = (
             args.per_device_train_batch_size * args.gradient_accumulation_steps * args.num_mini_batches
         )
@@ -150,15 +174,7 @@ class RLOOTrainer(Trainer):
             args.local_batch_size, args.rloo_k, "`local_batch_size` must be a multiple of rloo_k"
         )  # RLOO logic: needed because RLOO repeats the same prompt args.rloo_k times
 
-        #########
-        # setup model, optimizer, and others
-        #########
-        for module in [policy, ref_policy, reward_model]:
-            if isinstance(module, nn.Module):
-                disable_dropout_in_model(module)
-        if args.stop_token and args.stop_token == "eos":
-            args.stop_token_id = self.processing_class.eos_token_id
-        self.model = policy
+        # LEO: this part I kept here.
         self.create_optimizer_and_scheduler(
             num_training_steps=args.num_total_batches
         )  # note that we are calling `self.lr_scheduler.step()` manually only at the batch level
@@ -622,7 +638,9 @@ class RLOOTrainer(Trainer):
                             ),
                             dtype=torch.float,
                         ).to(postprocessed_query_response.device)
-                    table["score"].extend(self.accelerator.gather_for_metrics(score).float().cpu().numpy())
+                    
+                    score_LEO = torch.softmax(score, dim=1)[:,1]
+                    table["score"].extend(self.accelerator.gather_for_metrics(score_LEO).float().cpu().numpy())
 
                 if sampling:
                     break
