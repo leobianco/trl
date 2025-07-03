@@ -138,7 +138,11 @@ class RLOOTrainer(Trainer):
         if args.stop_token and args.stop_token == "eos":
             args.stop_token_id = self.processing_class.eos_token_id
         self.model = policy
-        args.world_size = 8  # I put this here. Must change by #GPUs
+        # Set world_size based on the number of GPUs/processes, unless already set in config
+        if torch.cuda.is_available():
+            args.world_size = torch.cuda.device_count()
+        else:
+            args.world_size = 1
         self.create_accelerator_and_postprocess()
         accelerator = self.accelerator
 
